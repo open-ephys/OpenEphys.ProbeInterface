@@ -1,0 +1,3 @@
+[submodule "OpenEphys.ProbeInterface.NET.Tests/probeinterface_library"]
+	path = OpenEphys.ProbeInterface.NET.Tests/probeinterface_library
+	url = https://github.com/SpikeInterface/probeinterface_library

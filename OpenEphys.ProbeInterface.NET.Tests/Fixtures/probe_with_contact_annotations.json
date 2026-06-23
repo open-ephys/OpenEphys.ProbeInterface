@@ -1,0 +1,25 @@
+{
+  "specification": "probeinterface",
+  "version": "0.3.2",
+  "probes": [
+    {
+      "ndim": 2,
+      "si_units": "um",
+      "annotations": {
+        "model_name": "TestProbe",
+        "manufacturer": "TestManufacturer"
+      },
+      "contact_annotations": {
+        "brain_area": ["CA1", "CA1", "DG"],
+        "channel_names": ["ch0", "ch1", "ch2"],
+        "impedance": [125.3, 98.7, 110.1]
+      },
+      "contact_positions": [[0.0, 0.0], [0.0, 20.0], [16.0, 10.0]],
+      "contact_shapes": ["circle", "circle", "circle"],
+      "contact_shape_params": [{"radius": 5.0}, {"radius": 5.0}, {"radius": 5.0}],
+      "contact_ids": ["0", "1", "2"],
+      "shank_ids": ["", "", ""],
+      "device_channel_indices": [0, 1, 2]
+    }
+  ]
+}

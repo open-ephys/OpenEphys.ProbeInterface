@@ -1,44 +1,69 @@
-﻿using Newtonsoft.Json;
+using System.Collections.Generic;
+using System.Linq;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace OpenEphys.ProbeInterface.NET
 {
     /// <summary>
-    /// Class holding the <see cref="Probe"/> annotations.
+    /// Probe-level annotations. <see cref="ModelName"/> and <see cref="Manufacturer"/> are required
+    /// by the spec; any additional key-value pairs are stored in <see cref="additionalProperties"/>
+    /// and accessible via <see cref="GetAnnotation{T}"/>, <see cref="SetAnnotation{T}"/>, and
+    /// <see cref="RemoveAnnotation"/>.
     /// </summary>
     public class ProbeAnnotations
     {
-        /// <summary>
-        /// Gets the name of the probe as defined by the manufacturer, or a descriptive name such as the neurological target.
-        /// </summary>
-        [JsonProperty("name")]
-        public string Name { get; protected set; }
+        /// <summary>Gets the model name of the probe as defined by the manufacturer.</summary>
+        [JsonProperty("model_name")]
+        public string ModelName { get; }
 
-        /// <summary>
-        /// Gets the name of the manufacturer who created the probe.
-        /// </summary>
+        /// <summary>Gets the name of the manufacturer who created the probe.</summary>
         [JsonProperty("manufacturer")]
-        public string Manufacturer {  get; protected set; }
+        public string Manufacturer { get; }
+
+        [JsonExtensionData]
+        private Dictionary<string, JToken>? additionalProperties;
+
+        /// <summary>Gets the keys of all additional annotations present on this probe.</summary>
+        [JsonIgnore]
+        public IEnumerable<string> AnnotationKeys =>
+            additionalProperties?.Keys ?? Enumerable.Empty<string>();
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="ProbeAnnotations"/> class.
+        /// Used by Newtonsoft.Json during deserialization.
         /// </summary>
-        /// <param name="name">String defining the name of the probe.</param>
-        /// <param name="manufacturer">String defining the manufacturer of the probe.</param>
         [JsonConstructor]
-        public ProbeAnnotations(string name, string manufacturer)
+        internal ProbeAnnotations(string model_name, string manufacturer)
         {
-            Name = name;
+            ModelName = model_name;
             Manufacturer = manufacturer;
         }
 
         /// <summary>
-        /// Copy constructor that copies data from an existing <see cref="ProbeAnnotations"/> object.
+        /// Returns an additional annotation value for the given key converted to
+        /// <typeparamref name="T"/>, or the default value of <typeparamref name="T"/> if absent.
         /// </summary>
-        /// <param name="probeAnnotations">Existing <see cref="ProbeAnnotations"/> object, containing a <see cref="Name"/> and a <see cref="Manufacturer"/>.</param>
-        protected ProbeAnnotations(ProbeAnnotations probeAnnotations)
+        public T? GetAnnotation<T>(string key)
         {
-            Name = probeAnnotations.Name;
-            Manufacturer = probeAnnotations.Manufacturer;
+            if (additionalProperties == null || !additionalProperties.TryGetValue(key, out var token))
+                return default;
+            return token.ToObject<T>();
         }
+
+        /// <summary>
+        /// Adds or replaces an additional annotation for the given key.
+        /// </summary>
+        public void SetAnnotation<T>(string key, T value)
+        {
+            additionalProperties ??= new Dictionary<string, JToken>();
+            additionalProperties[key] = JToken.FromObject(value!);
+        }
+
+        /// <summary>
+        /// Removes the additional annotation with the given key.
+        /// Returns true if the key was found and removed.
+        /// </summary>
+        public bool RemoveAnnotation(string key) =>
+            additionalProperties != null && additionalProperties.Remove(key);
     }
 }

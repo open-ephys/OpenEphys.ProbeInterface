@@ -16,8 +16,8 @@ namespace OpenEphys.ProbeInterface.NET
         /// <remarks>
         /// This is only used to draw <see cref="ContactShape.Circle"/> contacts. Field can be null.
         /// </remarks>
-        [JsonProperty("radius")]
-        public float? Radius { get; protected set; }
+        [JsonProperty("radius", NullValueHandling = NullValueHandling.Ignore)]
+        public double? Radius { get; }
 
         /// <summary>
         /// Gets the width of the contact.
@@ -26,8 +26,8 @@ namespace OpenEphys.ProbeInterface.NET
         /// This is used to draw <see cref="ContactShape.Square"/> or <see cref="ContactShape.Rect"/> contacts.
         /// Field can be null.
         /// </remarks>
-        [JsonProperty("width")]
-        public float? Width { get; protected set; }
+        [JsonProperty("width", NullValueHandling = NullValueHandling.Ignore)]
+        public double? Width { get; }
 
         /// <summary>
         /// Gets the height of the contact.
@@ -35,32 +35,19 @@ namespace OpenEphys.ProbeInterface.NET
         /// <remarks>
         /// This is only used to draw <see cref="ContactShape.Rect"/> contacts. Field can be null.
         /// </remarks>
-        [JsonProperty("height")]
-        public float? Height { get; protected set; }
+        [JsonProperty("height", NullValueHandling = NullValueHandling.Ignore)]
+        public double? Height { get; }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="ContactShapeParam"/> class.
+        /// Used by Newtonsoft.Json during deserialization.
         /// </summary>
-        /// <param name="radius">Radius. Can be null.</param>
-        /// <param name="width">Width. Can be null.</param>
-        /// <param name="height">Height. Can be null.</param>
         [JsonConstructor]
-        public ContactShapeParam(float? radius = null, float? width = null, float? height = null)
+        internal ContactShapeParam(double? radius = null, double? width = null, double? height = null)
         {
             Radius = radius;
             Width = width;
             Height = height;
-        }
-
-        /// <summary>
-        /// Copy constructor given an existing <see cref="ContactShapeParam"/> object.
-        /// </summary>
-        /// <param name="shape">Existing <see cref="ContactShapeParam"/> object to be copied.</param>
-        protected ContactShapeParam(ContactShapeParam shape)
-        {
-            Radius = shape.Radius;
-            Width = shape.Width;
-            Height = shape.Height;
         }
     }
 }

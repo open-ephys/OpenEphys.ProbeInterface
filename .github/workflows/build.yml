@@ -1,16 +1,31 @@
 name: Build .NET and Publish to Nuget
 
-# This workflow will run when: 1) any commit is pushed to main, 2) any pull request is opened that will merge to main, and 3) whenever a new release is published.
+# This workflow will run when: 1) any commit is pushed to main, 2) any pull request is opened that
+# will merge to main, and 3) whenever a new release is published.
 on:
   push:
-    branches: [main] # 1) Generates a package on Github that is a pre-release package, and is typically named X.Y.Z-main-ci000, where X/Y/Z are the semantic version numbers, and ci000 is incremented for each action that is run, guaranteeing a unique package name
+    branches: [main] # 1) Generates a pre-release package named X.Y.Z-main-ci000
   pull_request:
-    branches: [main] # 2) Does not generate a package, but does check that the semantic version number is increasing, and that the package builds correctly in all matrix configurations (Ubuntu / Windows and Release / Debug)
+    branches: [main] # 2) Checks version, build, and tests . Does not generate a package
   release:
-    types: [published] # 3) Generates a package that is a full release package (X.Y.Z) that is published to Github and NuGet automatically
+    types: [published] # 3) Generates a full release package (X.Y.Z) published to GitHub and NuGet
 
 jobs:
+  test:
+    name: Run Tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.x'
+      - name: Run tests
+        run: dotnet test --configuration Release
+
   build_and_publish:
+    needs: test
     uses: open-ephys/github-actions/.github/workflows/build_dotnet_publish_nuget.yml@main
     secrets:
       NUGET_APIKEY: ${{ secrets.NUGET_APIKEY }}

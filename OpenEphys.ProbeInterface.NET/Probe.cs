@@ -1,330 +1,269 @@
-﻿using System.Xml.Serialization;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Xml.Serialization;
 using Newtonsoft.Json;
 
 namespace OpenEphys.ProbeInterface.NET
 {
     /// <summary>
-    /// Class that implements the Probe Interface specification for a Probe.
+    /// Represents a single probe in a <see cref="ProbeGroup"/>.
+    /// The primary public API is <see cref="Contacts"/>, which exposes all per-contact data as a
+    /// strongly-typed collection. Channel mapping is stored in <see cref="ChannelMap"/> and managed
+    /// exclusively via <see cref="ChannelWiring"/>. JSON serialization/deserialization preserves the
+    /// probeinterface parallel-array format transparently.
     /// </summary>
     public class Probe
     {
-        /// <summary>
-        /// Gets the <see cref="ProbeNdim"/> to use while plotting the <see cref="Probe"/>.
-        /// </summary>
+        /// <summary>Gets the number of spatial dimensions (2 or 3).</summary>
         [XmlIgnore]
         [JsonProperty("ndim", Required = Required.Always)]
-        public ProbeNdim NumDimensions { get; protected set; }
+        public ProbeNdim NumDimensions { get; }
 
-        /// <summary>
-        /// Gets the <see cref="ProbeSiUnits"/> to use while plotting the <see cref="Probe"/>.
-        /// </summary>
+        /// <summary>Gets the SI unit used for contact positions.</summary>
         [XmlIgnore]
         [JsonProperty("si_units", Required = Required.Always)]
-        public ProbeSiUnits SiUnits { get; protected set; }
+        public ProbeSiUnits SiUnits { get; }
 
-        /// <summary>
-        /// Gets the <see cref="ProbeAnnotations"/> for the <see cref="Probe"/>.
-        /// </summary>
-        /// <remarks>
-        /// Used to specify the name of the probe, and the manufacturer.
-        /// </remarks>
+        /// <summary>Gets the probe-level annotations (model name, manufacturer).</summary>
         [XmlIgnore]
         [JsonProperty("annotations", Required = Required.Always)]
-        public ProbeAnnotations Annotations { get; protected set; }
+        public ProbeAnnotations Annotations { get; }
+
+        /// <summary>Gets the planar contour describing the physical outline of the probe, or null.</summary>
+        [XmlIgnore]
+        [JsonProperty("probe_planar_contour", NullValueHandling = NullValueHandling.Ignore)]
+        public double[][]? ProbePlanarContour { get; }
 
         /// <summary>
-        /// Gets the <see cref="ContactAnnotations.ContactAnnotations"/> for the <see cref="Probe"/>.
+        /// Gets the contacts on this probe. Each <see cref="Contact"/> carries all per-contact data:
+        /// position, shape, shank, plane axes, side, and annotations.
         /// </summary>
-        /// <remarks>
-        /// This field can be used for noting things like where it physically is within a specimen, or if it
-        /// is no longer functioning correctly.
-        /// </remarks>
-        [XmlIgnore]
-        [JsonProperty("contact_annotations")]
-        public ContactAnnotations ContactAnnotations { get; protected set; }
+        [JsonIgnore]
+        public IReadOnlyList<Contact> Contacts { get; }
+
+        /// <summary>Gets the number of contacts on this probe.</summary>
+        [JsonIgnore]
+        public int NumberOfContacts => Contacts.Count;
+
+        /// <summary>Gets the contact annotation keys defined for this probe.</summary>
+        [JsonIgnore]
+        public IEnumerable<string> ContactAnnotationKeys =>
+            annotationStore.Data?.Keys ?? Enumerable.Empty<string>();
+
+        private Dictionary<int, int>? channelMap;
 
         /// <summary>
-        /// Gets the <see cref="Contact"/> positions, specifically the center point of every contact.
+        /// Gets the channel mapping for this probe as a read-only dictionary mapping contact index
+        /// to hardware channel, or null if no mapping has been assigned. Contacts absent from the
+        /// dictionary are not connected. Managed exclusively via <see cref="ProbeGroup"/>.
         /// </summary>
-        /// <remarks>
-        /// This is a two-dimensional array of floats; the first index is the index of the contact, and
-        /// the second index is the X and Y value, respectively.
-        /// </remarks>
-        [XmlIgnore]
+        [JsonIgnore]
+        public IReadOnlyDictionary<int, int>? ChannelMap => channelMap;
+
+        /// <summary>Replaces the channel map. Called by <see cref="ProbeGroup"/> to keep mapping consistent across all probes.</summary>
+        internal void SetChannelMap(Dictionary<int, int>? map) => channelMap = map;
+
+        private readonly ContactAnnotationStore annotationStore = new ContactAnnotationStore();
+
+        // Newtonsoft.Json serializes non-public [JsonProperty] members; deserialization
+        // goes through [JsonConstructor] so these getters are never called during reads.
+
         [JsonProperty("contact_positions", Required = Required.Always)]
-        public float[][] ContactPositions { get; protected set; }
+        private double[][] ContactPositionsJson => Contacts.Select(c =>
+            c.PosZ.HasValue
+                ? new double[] { c.PosX, c.PosY, c.PosZ.Value }
+                : new double[] { c.PosX, c.PosY }).ToArray();
 
-        /// <summary>
-        /// Gets the plane axes for the contacts.
-        /// </summary>
-        [XmlIgnore]
-        [JsonProperty("contact_plane_axes")]
-        public float[][][] ContactPlaneAxes { get; protected set; }
+        [JsonProperty("contact_plane_axes", NullValueHandling = NullValueHandling.Ignore)]
+        private double[][][]? ContactPlaneAxesJson =>
+            Contacts.All(c => c.PlaneAxes == null) ? null
+            : Contacts.Select(c => c.PlaneAxes ?? new double[][] { new double[] { 1, 0 }, new double[] { 0, 1 } }).ToArray();
 
-        /// <summary>
-        /// Gets the <see cref="ContactShape"/> for each contact.
-        /// </summary>
-        [XmlIgnore]
         [JsonProperty("contact_shapes", Required = Required.Always)]
-        public ContactShape[] ContactShapes { get; protected set; }
+        private ContactShape[] ContactShapesJson => Contacts.Select(c => c.Shape).ToArray();
 
-        /// <summary>
-        /// Gets the parameters of the shape for each contact.
-        /// </summary>
-        /// <remarks>
-        /// Depending on which <see cref="ContactShape"/>
-        /// is selected, not all parameters are needed; for instance, <see cref="ContactShape.Circle"/> only uses
-        /// <see cref="ContactShapeParam.Radius"/>, while <see cref="ContactShape.Square"/> just uses
-        /// <see cref="ContactShapeParam.Width"/>.
-        /// </remarks>
-        [XmlIgnore]
         [JsonProperty("contact_shape_params", Required = Required.Always)]
-        public ContactShapeParam[] ContactShapeParams { get; protected set; }
+        private ContactShapeParam[] ContactShapeParamsJson => Contacts.Select(c => c.ShapeParams).ToArray();
 
-        /// <summary>
-        /// Gets the outline of the probe that represents the physical shape.
-        /// </summary>
-        [XmlIgnore]
-        [JsonProperty("probe_planar_contour")]
-        public float[][] ProbePlanarContour { get; protected set; }
-
-        /// <summary>
-        /// Gets the indices of each channel defining their recording channel number. Must be unique, except for contacts
-        /// that are set to -1 if they disabled.
-        /// </summary>
-        [XmlIgnore]
-        [JsonProperty("device_channel_indices")]
-        public int[] DeviceChannelIndices { get; internal set; }
-
-        /// <summary>
-        /// Gets the contact IDs for each channel. These do not have to be unique.
-        /// </summary>
-        [XmlIgnore]
-        [JsonProperty("contact_ids")]
-        public string[] ContactIds { get; internal set; }
-
-        /// <summary>
-        /// Gets the shank that each contact belongs to.
-        /// </summary>
-        [XmlIgnore]
-        [JsonProperty("shank_ids")]
-        public string[] ShankIds { get; internal set; }
-
-        /// <summary>
-        /// Public constructor, defined as the default Json constructor.
-        /// </summary>
-        /// <param name="ndim">Number of dimensions to use while plotting the contacts [<see cref="ProbeNdim.Two"/> or <see cref="ProbeNdim.Three"/>].</param>
-        /// <param name="si_units">Real-world units to use while plotting the contacts [<see cref="ProbeSiUnits.mm"/> or <see cref="ProbeSiUnits.um"/>].</param>
-        /// <param name="annotations">Annotations for the probe.</param>
-        /// <param name="contact_annotations">Annotations for each contact as an array of strings.</param>
-        /// <param name="contact_positions">Center position of each contact in a two-dimensional array of floats. For more info, see <see cref="ContactPositions"/>.</param>
-        /// <param name="contact_plane_axes">Plane axes of each contact in a three-dimensional array of floats. For more info, see <see cref="ContactPlaneAxes"/>.</param>
-        /// <param name="contact_shapes">Array of shapes for each contact.</param>
-        /// <param name="contact_shape_params">Array of shape parameters for the each contact.</param>
-        /// <param name="probe_planar_contour">Two-dimensional array of floats (X and Y positions) defining a closed shape for a probe contour.</param>
-        /// <param name="device_channel_indices">Array of integers containing the device channel indices for each contact. For more info, see <see cref="DeviceChannelIndices"/>.</param>
-        /// <param name="contact_ids">Array of strings containing the contact ID for each contact. For more info, see <see cref="ContactIds"/>.</param>
-        /// <param name="shank_ids">Array of strings containing the shank ID for each contact. For more info, see <see cref="ShankIds"/>.</param>
-        [JsonConstructor]
-        public Probe(ProbeNdim ndim, ProbeSiUnits si_units, ProbeAnnotations annotations, ContactAnnotations contact_annotations,
-            float[][] contact_positions, float[][][] contact_plane_axes, ContactShape[] contact_shapes,
-            ContactShapeParam[] contact_shape_params, float[][] probe_planar_contour, int[] device_channel_indices,
-            string[] contact_ids, string[] shank_ids)
+        [JsonProperty("device_channel_indices", NullValueHandling = NullValueHandling.Ignore)]
+        private int[]? DeviceChannelIndicesJson
         {
+            get
+            {
+                if (channelMap == null) return null;
+                var arr = new int[NumberOfContacts];
+                for (int i = 0; i < arr.Length; i++)
+                    arr[i] = channelMap.TryGetValue(i, out var ch) ? ch : -1;
+                return arr;
+            }
+        }
+
+        [JsonProperty("contact_ids", NullValueHandling = NullValueHandling.Ignore)]
+        private string?[]? ContactIdsJson => Contacts.All(c => c.ContactId == null) ? null
+            : Contacts.Select(c => c.ContactId).ToArray();
+
+        [JsonProperty("shank_ids", NullValueHandling = NullValueHandling.Ignore)]
+        private string?[]? ShankIdsJson => Contacts.All(c => c.ShankId == null) ? null
+            : Contacts.Select(c => c.ShankId).ToArray();
+
+        [JsonProperty("contact_sides", NullValueHandling = NullValueHandling.Ignore)]
+        private string[]? ContactSidesJson =>
+            Contacts.All(c => c.Side == null) ? null
+            : Contacts.Select(c => c.Side ?? "").ToArray();
+
+        [JsonProperty("contact_annotations", NullValueHandling = NullValueHandling.Ignore)]
+        private Dictionary<string, object[]>? ContactAnnotationsJson => annotationStore.Data;
+
+        /// <summary>
+        /// JSON constructor. Deserializes a probe from the probeinterface parallel-array format and
+        /// builds the <see cref="Contacts"/> collection. Throws <see cref="ArgumentException"/> if any
+        /// parallel arrays have inconsistent lengths.
+        /// </summary>
+        [JsonConstructor]
+        internal Probe(
+            ProbeNdim ndim, ProbeSiUnits si_units, ProbeAnnotations annotations,
+            Dictionary<string, object[]>? contact_annotations,
+            double[][] contact_positions, double[][][]? contact_plane_axes,
+            ContactShape[] contact_shapes, ContactShapeParam[] contact_shape_params,
+            double[][]? probe_planar_contour, int[]? device_channel_indices,
+            string[]? contact_ids, string[]? shank_ids, string[]? contact_sides)
+        {
+            int n = contact_positions.Length;
+
+            if (contact_shapes.Length != n || contact_shape_params.Length != n)
+                throw new ArgumentException(
+                    $"contact_positions ({n}), contact_shapes ({contact_shapes.Length}), and " +
+                    $"contact_shape_params ({contact_shape_params.Length}) must all have the same length.");
+
+            if (contact_plane_axes != null && contact_plane_axes.Length != n)
+                throw new ArgumentException(
+                    $"contact_plane_axes length ({contact_plane_axes.Length}) must match contact count ({n}).");
+            if (contact_ids != null && contact_ids.Length != n)
+                throw new ArgumentException(
+                    $"contact_ids length ({contact_ids.Length}) must match contact count ({n}).");
+            if (shank_ids != null && shank_ids.Length != n)
+                throw new ArgumentException(
+                    $"shank_ids length ({shank_ids.Length}) must match contact count ({n}).");
+            if (device_channel_indices != null && device_channel_indices.Length != n)
+                throw new ArgumentException(
+                    $"device_channel_indices length ({device_channel_indices.Length}) must match contact count ({n}).");
+            if (contact_sides != null && contact_sides.Length != n)
+                throw new ArgumentException(
+                    $"contact_sides length ({contact_sides.Length}) must match contact count ({n}).");
+            if (contact_annotations != null)
+            {
+                foreach (var kvp in contact_annotations)
+                {
+                    if (kvp.Value.Length != n)
+                        throw new ArgumentException(
+                            $"contact_annotations[\"{kvp.Key}\"] length ({kvp.Value.Length}) must match contact count ({n}).");
+                }
+            }
+
             NumDimensions = ndim;
             SiUnits = si_units;
             Annotations = annotations;
-            ContactAnnotations = contact_annotations;
-            ContactPositions = contact_positions;
-            ContactPlaneAxes = contact_plane_axes;
-            ContactShapes = contact_shapes;
-            ContactShapeParams = contact_shape_params;
             ProbePlanarContour = probe_planar_contour;
-            DeviceChannelIndices = device_channel_indices;
-            ContactIds = contact_ids;
-            ShankIds = shank_ids;
-        }
+            annotationStore.Data = contact_annotations;
 
-        /// <summary>
-        /// Copy constructor given an existing <see cref="Probe"/> object.
-        /// </summary>
-        /// <param name="probe">Existing <see cref="Probe"/> object to be copied.</param>
-        public Probe(Probe probe)
-        {
-            NumDimensions = probe.NumDimensions;
-            SiUnits = probe.SiUnits;
-            Annotations = probe.Annotations;
-            ContactAnnotations = probe.ContactAnnotations;
-            ContactPositions = probe.ContactPositions;
-            ContactPlaneAxes = probe.ContactPlaneAxes;
-            ContactShapes = probe.ContactShapes;
-            ContactShapeParams = probe.ContactShapeParams;
-            ProbePlanarContour = probe.ProbePlanarContour;
-            DeviceChannelIndices = probe.DeviceChannelIndices;
-            ContactIds = probe.ContactIds;
-            ShankIds = probe.ShankIds;
-        }
-
-        /// <summary>
-        /// Returns default <see cref="ContactShape"/> array that contains the given number of channels and the corresponding shape.
-        /// </summary>
-        /// <param name="numberOfContacts">Number of contacts in a single <see cref="Probe"/>.</param>
-        /// <param name="contactShape">The <see cref="ContactShape"/> to apply to each contact.</param>
-        /// <returns><see cref="ContactShape"/> array.</returns>
-        public static ContactShape[] DefaultContactShapes(int numberOfContacts, ContactShape contactShape)
-        {
-            ContactShape[] contactShapes = new ContactShape[numberOfContacts];
-
-            for (int i = 0; i < numberOfContacts; i++)
+            // Convert the parallel array to a dictionary, skipping -1 (not connected) entries.
+            if (device_channel_indices != null)
             {
-                contactShapes[i] = contactShape;
+                var map = new Dictionary<int, int>();
+                for (int i = 0; i < device_channel_indices.Length; i++)
+                {
+                    if (device_channel_indices[i] != -1)
+                        map[i] = device_channel_indices[i];
+                }
+                channelMap = map.Count > 0 ? map : null;
             }
 
-            return contactShapes;
+            Contacts = BuildContacts(n, contact_positions, contact_plane_axes, contact_shapes,
+                contact_shape_params, contact_ids, shank_ids, contact_sides, annotationStore);
         }
 
         /// <summary>
-        /// Returns a default contactPlaneAxes array, with each contact given the same axis; { { 1, 0 }, { 0, 1 } }
+        /// Constructs the <see cref="Contacts"/> array from the probeinterface parallel arrays.
+        /// All contacts receive a reference to the same <paramref name="store"/> so mutations made
+        /// through any contact are immediately visible probe-wide.
         /// </summary>
-        /// <remarks>
-        /// See Probeinterface documentation for more info.
-        /// </remarks>
-        /// <param name="numberOfContacts">Number of contacts in a single <see cref="Probe"/>.</param>
-        /// <returns>Three-dimensional array of <see cref="float"/>s.</returns>
-        public static float[][][] DefaultContactPlaneAxes(int numberOfContacts)
+        private static Contact[] BuildContacts(
+            int n, double[][] positions, double[][][]? planeAxes,
+            ContactShape[] shapes, ContactShapeParam[] shapeParams,
+            string[]? contactIds, string[]? shankIds,
+            string[]? contactSides, ContactAnnotationStore store)
         {
-            float[][][] contactPlaneAxes = new float[numberOfContacts][][];
-
-            for (int i = 0; i < numberOfContacts; i++)
+            var contacts = new Contact[n];
+            for (int i = 0; i < n; i++)
             {
-                contactPlaneAxes[i] = new float[2][] { new float[2] { 1.0f, 0.0f }, new float[2] { 0.0f, 1.0f } };
+                double? posZ = positions[i].Length >= 3 ? positions[i][2] : (double?)null;
+                contacts[i] = new Contact(
+                    posX: positions[i][0],
+                    posY: positions[i][1],
+                    posZ: posZ,
+                    shape: shapes[i],
+                    shapeParams: shapeParams[i],
+                    contactId: contactIds?[i],
+                    shankId: shankIds?[i],
+                    planeAxes: planeAxes?[i],
+                    side: contactSides?[i],
+                    index: i,
+                    totalContacts: n,
+                    store: store);
             }
-
-            return contactPlaneAxes;
+            return contacts;
         }
 
         /// <summary>
-        /// Returns an array of <see cref="ContactShapeParam"/>s for a <see cref="ContactShape.Circle"/>.
+        /// Returns a dictionary mapping each assigned hardware channel to a tuple of
+        /// (contact index within this probe, <see cref="Contact"/>), or null if no channels
+        /// have been assigned on this probe.
         /// </summary>
-        /// <param name="numberOfContacts">Number of contacts in a single <see cref="Probe"/>.</param>
-        /// <param name="radius">Radius of the contact, in units of <see cref="ProbeSiUnits"/>.</param>
-        /// <returns><see cref="ContactShapeParam"/> array.</returns>
-        public static ContactShapeParam[] DefaultCircleParams(int numberOfContacts, float radius)
+        public IReadOnlyDictionary<int, (int ContactIndex, Contact Contact)>? GetChannelMap()
         {
-            ContactShapeParam[] contactShapeParams = new ContactShapeParam[numberOfContacts];
-
-            for (int i = 0; i < numberOfContacts; i++)
-            {
-                contactShapeParams[i] = new ContactShapeParam(radius: radius);
-            }
-
-            return contactShapeParams;
+            if (channelMap == null) return null;
+            var result = new Dictionary<int, (int ContactIndex, Contact Contact)>();
+            foreach (var kvp in channelMap)
+                result[kvp.Value] = (kvp.Key, Contacts[kvp.Key]);
+            return result.Count > 0 ? result : null;
         }
 
         /// <summary>
-        /// Returns an array of <see cref="ContactShapeParam"/>s for a <see cref="ContactShape.Square"/>.
+        /// Returns all per-contact values for the given annotation key as an array of
+        /// <typeparamref name="T"/>, or null if the key is absent from the probe entirely.
+        /// Contacts that have no value for the key yield the default of <typeparamref name="T"/>.
         /// </summary>
-        /// <param name="numberOfContacts">Number of contacts in a single <see cref="Probe"/>.</param>
-        /// <param name="width">Width of the contact, in units of <see cref="ProbeSiUnits"/>.</param>
-        /// <returns><see cref="ContactShapeParam"/> array.</returns>
-        public static ContactShapeParam[] DefaultSquareParams(int numberOfContacts, float width)
+        public T[]? GetContactAnnotation<T>(string key)
         {
-            ContactShapeParam[] contactShapeParams = new ContactShapeParam[numberOfContacts];
-
-            for (int i = 0; i < numberOfContacts; i++)
-            {
-                contactShapeParams[i] = new ContactShapeParam(width: width);
-            }
-
-            return contactShapeParams;
+            if (annotationStore.Data == null || !annotationStore.Data.TryGetValue(key, out var values) || values == null)
+                return null;
+            var targetType = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
+            return Array.ConvertAll(values, v => v == null ? default! : (T)Convert.ChangeType(v, targetType));
         }
 
         /// <summary>
-        /// Returns an array of <see cref="ContactShapeParam"/>s for a <see cref="ContactShape.Rect"/>.
+        /// Adds or replaces a per-contact annotation for the given key. <paramref name="values"/>
+        /// must contain one element per contact. Null elements are permitted for contacts without
+        /// a value. Per-contact <see cref="Contact.GetAnnotation{T}"/> reflects the update
+        /// immediately.
         /// </summary>
-        /// <param name="numberOfContacts">Number of contacts in a single <see cref="Probe"/>.</param>
-        /// <param name="width">Width of the contact, in units of <see cref="ProbeSiUnits"/>.</param>
-        /// <param name="height">Height of the contact, in units of <see cref="ProbeSiUnits"/>.</param>
-        /// <returns><see cref="ContactShapeParam"/> array.</returns>
-        public static ContactShapeParam[] DefaultRectParams(int numberOfContacts, float width, float height)
+        public void SetContactAnnotation<T>(string key, T[] values)
         {
-            ContactShapeParam[] contactShapeParams = new ContactShapeParam[numberOfContacts];
+            if (values.Length != NumberOfContacts)
+                throw new ArgumentException(
+                    $"Annotation array length ({values.Length}) must match the number of contacts ({NumberOfContacts}).",
+                    nameof(values));
 
-            for (int i = 0; i < numberOfContacts; i++)
-            {
-                contactShapeParams[i] = new ContactShapeParam(width: width, height: height);
-            }
-
-            return contactShapeParams;
+            annotationStore.Data ??= new Dictionary<string, object[]>();
+            annotationStore.Data[key] = Array.ConvertAll(values, v => (object)v!);
         }
 
         /// <summary>
-        /// Returns a default array of sequential <see cref="DeviceChannelIndices"/>.
+        /// Removes the per-contact annotation with the given key entirely.
+        /// Returns true if the key was found and removed.
         /// </summary>
-        /// <param name="numberOfContacts">Number of contacts in a single <see cref="Probe"/>.</param>
-        /// <param name="offset">The first value of the <see cref="DeviceChannelIndices"/>.</param>
-        /// <returns>A serially increasing array of <see cref="DeviceChannelIndices"/>.</returns>
-        public static int[] DefaultDeviceChannelIndices(int numberOfContacts, int offset)
-        {
-            int[] deviceChannelIndices = new int[numberOfContacts];
-
-            for (int i = 0; i < numberOfContacts; i++)
-            {
-                deviceChannelIndices[i] = i + offset;
-            }
-
-            return deviceChannelIndices;
-        }
-
-        /// <summary>
-        /// Returns a sequential array of <see cref="ContactIds"/>.
-        /// </summary>
-        /// <param name="numberOfContacts">Number of contacts in a single <see cref="Probe"/>.</param>
-        /// <returns>Array of strings defining the <see cref="ContactIds"/>.</returns>
-        public static string[] DefaultContactIds(int numberOfContacts)
-        {
-            string[] contactIds = new string[numberOfContacts];
-
-            for (int i = 0; i < numberOfContacts; i++)
-            {
-                contactIds[i] = i.ToString();
-            }
-
-            return contactIds;
-        }
-
-        /// <summary>
-        /// Returns an array of empty strings as the default shank ID.
-        /// </summary>
-        /// <param name="numberOfContacts">Number of contacts in a single <see cref="Probe"/>.</param>
-        /// <returns>Array of empty strings.</returns>
-        public static string[] DefaultShankIds(int numberOfContacts)
-        {
-            string[] contactIds = new string[numberOfContacts];
-
-            for (int i = 0; i < numberOfContacts; i++)
-            {
-                contactIds[i] = "";
-            }
-
-            return contactIds;
-        }
-
-        /// <summary>
-        /// Returns a <see cref="Contact"/> object.
-        /// </summary>
-        /// <param name="index">Relative index of the contact in this <see cref="Probe"/>.</param>
-        /// <returns><see cref="Contact"/>.</returns>
-        public Contact GetContact(int index)
-        {
-            return new Contact(ContactPositions[index][0], ContactPositions[index][1], ContactShapes[index], ContactShapeParams[index],
-                DeviceChannelIndices[index], ContactIds[index], ShankIds[index], index);
-        }
-
-        /// <summary>
-        /// Gets the number of contacts within this <see cref="Probe"/>.
-        /// </summary>
-        [JsonIgnore]
-        public int NumberOfContacts => ContactPositions.Length;
+        public bool RemoveContactAnnotation(string key) =>
+            annotationStore.Data != null && annotationStore.Data.Remove(key);
     }
 }

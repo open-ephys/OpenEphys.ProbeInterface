@@ -2,7 +2,7 @@
 <Project>
   <PropertyGroup>
     <Authors>Open Ephys</Authors>
-    <Copyright>Copyright © Open Ephys and Contributors 2024</Copyright>
+    <Copyright>Copyright © Open Ephys</Copyright>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <IncludeSymbols>true</IncludeSymbols>
@@ -12,7 +12,7 @@
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <UseArtifactsOutput>true</UseArtifactsOutput>
     <PackageIcon>icon.png</PackageIcon>
-    <VersionPrefix>0.3.0</VersionPrefix>
+    <VersionPrefix>0.4.0</VersionPrefix>
     <VersionSuffix></VersionSuffix>
     <LangVersion>10.0</LangVersion>
     <Features>strict</Features>

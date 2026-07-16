@@ -1,0 +1,20 @@
+{
+  "specification": "probeinterface",
+  "version": "0.3.2",
+  "probes": [
+    {
+      "ndim": 3,
+      "si_units": "um",
+      "annotations": {
+        "model_name": "TestProbe3D",
+        "manufacturer": "TestManufacturer"
+      },
+      "contact_positions": [[0.0, 0.0, 0.0], [0.0, 20.0, 5.0], [16.0, 10.0, 10.0]],
+      "contact_shapes": ["circle", "circle", "circle"],
+      "contact_shape_params": [{"radius": 5.0}, {"radius": 5.0}, {"radius": 5.0}],
+      "contact_ids": ["0", "1", "2"],
+      "shank_ids": ["", "", ""],
+      "device_channel_indices": [0, 1, 2]
+    }
+  ]
+}

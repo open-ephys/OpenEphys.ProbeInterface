@@ -1,328 +1,130 @@
-﻿using System.Collections.Generic;
+using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Xml.Serialization;
 using Newtonsoft.Json;
-using System;
 
 namespace OpenEphys.ProbeInterface.NET
 {
     /// <summary>
-    /// Abstract class that implements the Probeinterface specification in C# for .NET.
+    /// Implements the probeinterface specification in C# for .NET.
     /// </summary>
-    public abstract class ProbeGroup
+    public class ProbeGroup
     {
-        /// <summary>
-        /// Gets the string defining the specification of the file.
-        /// </summary>
-        /// <remarks>
-        /// For Probeinterface files, this value is expected to be "probeinterface".
-        /// </remarks>
+        private static readonly Regex VersionPattern = new(@"^\d+\.\d+\.\d+$", RegexOptions.Compiled);
+
+        /// <summary>The probeinterface specification version implemented by this library.</summary>
+        public static readonly Version SupportedSpecVersion = new Version(0, 3, 2);
+
+        /// <summary>Gets the specification identifier. Must be "probeinterface".</summary>
         [JsonProperty("specification", Required = Required.Always)]
-        public string Specification { get; protected set; }
+        public string Specification { get; }
 
-        /// <summary>
-        /// Gets the string defining which version of Probeinterface was used.
-        /// </summary>
+        /// <summary>Gets the probeinterface version string (major.minor.patch).</summary>
         [JsonProperty("version", Required = Required.Always)]
-        public string Version { get; protected set; }
+        public string Version { get; }
 
         /// <summary>
-        /// Gets an IEnumerable of probes that are present.
+        /// Gets the probes in this group. Use <see cref="Probe.Contacts"/> on each probe for
+        /// per-contact data and <see cref="Probe.ChannelMap"/> for the channel mapping.
         /// </summary>
-        /// <remarks>
-        /// Each probe can contain multiple shanks, and each probe has a unique
-        /// contour that defines the physical representation of the probe. Contacts have several representations
-        /// for their channel number, specifically <see cref="Probe.ContactIds"/> (a string that is not guaranteed to be unique) and
-        /// <see cref="Probe.DeviceChannelIndices"/> (guaranteed to be unique across all probes). <see cref="Probe.DeviceChannelIndices"/>'s can also be set to -1
-        /// to indicate that the channel was not connected or recorded from.
-        /// </remarks>
         [XmlIgnore]
         [JsonProperty("probes", Required = Required.Always)]
-        public IEnumerable<Probe> Probes { get; protected set; }
+        public IEnumerable<Probe> Probes { get; }
+
+        /// <summary>Gets the total number of contacts across all probes.</summary>
+        [JsonIgnore]
+        public int NumberOfContacts => Probes.Sum(p => p.NumberOfContacts);
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="ProbeGroup"/> class.
+        /// Initializes a <see cref="ProbeGroup"/> and immediately validates it.
+        /// Used by Newtonsoft.Json during deserialization.
         /// </summary>
-        /// <param name="specification">String defining the <see cref="Specification"/> parameter.</param>
-        /// <param name="version">String defining the <see cref="Version"/> parameter.</param>
-        /// <param name="probes">IEnumerable of <see cref="Probe"/> objects.</param>
-        public ProbeGroup(string specification, string version, IEnumerable<Probe> probes)
+        /// <param name="specification">Must be "probeinterface".</param>
+        /// <param name="version">Semver string (major.minor.patch).</param>
+        /// <param name="probes">One or more probes.</param>
+        [JsonConstructor]
+        protected ProbeGroup(string specification, string version, IEnumerable<Probe> probes)
         {
             Specification = specification;
             Version = version;
             Probes = probes;
-
             Validate();
         }
 
-        /// <summary>
-        /// Copy constructor that takes in an existing <see cref="ProbeGroup"/> object and copies the individual fields.
-        /// </summary>
-        /// <remarks>
-        /// After copying the relevant fields, the <see cref="ProbeGroup"/> is validated to ensure that it is compliant
-        /// with the Probeinterface specification. See <see cref="Validate"/> for more details on what is checked.
-        /// </remarks>
-        /// <param name="probeGroup">Existing <see cref="ProbeGroup"/> object.</param>
+        /// <summary>Protected copy constructor for subclasses.</summary>
         protected ProbeGroup(ProbeGroup probeGroup)
         {
             Specification = probeGroup.Specification;
             Version = probeGroup.Version;
             Probes = probeGroup.Probes;
-
             Validate();
         }
 
         /// <summary>
-        /// Gets the number of contacts across all <see cref="Probe"/> objects.
+        /// Validates the group against the probeinterface specification. Throws
+        /// <see cref="InvalidOperationException"/> if the specification string, version format, probe
+        /// count, or channel index uniqueness are invalid.
+        /// Per-contact array length consistency is validated by <see cref="Probe"/>'s constructor.
         /// </summary>
-        [JsonIgnore]
-        public int NumberOfContacts => Probes.Aggregate(0, (total, next) => total + next.NumberOfContacts);
-
-        /// <summary>
-        /// Returns the <see cref="Probe.ContactIds"/>'s of all contacts in all probes.
-        /// </summary>
-        /// <remarks>
-        /// Note that these are not guaranteed to be unique values across probes.
-        /// </remarks>
-        /// <returns>List of strings containing all contact IDs.</returns>
-        public IEnumerable<string> GetContactIds()
+        private void Validate()
         {
-            List<string> contactIds = new();
+            if (Specification != "probeinterface")
+                throw new InvalidOperationException(
+                    $"Specification must be \"probeinterface\" but was \"{Specification}\".");
 
-            foreach (var probe in Probes)
-            {
-                contactIds.AddRange(probe.ContactIds.ToList());
-            }
+            if (string.IsNullOrEmpty(Version) || !VersionPattern.IsMatch(Version))
+                throw new InvalidOperationException(
+                    $"Version \"{Version}\" does not match the required pattern major.minor.patch (e.g. \"0.3.2\").");
 
-            return contactIds;
-        }
+            var v = new Version(Version);
+            if (v.Major != SupportedSpecVersion.Major || v.Minor != SupportedSpecVersion.Minor)
+                throw new InvalidOperationException(
+                    $"Version \"{Version}\" is not compatible with this library, which implements " +
+                    $"probeinterface {SupportedSpecVersion.Major}.{SupportedSpecVersion.Minor}.x.");
 
-        /// <summary>
-        /// Returns all <see cref="Contact"/> objects in the <see cref="ProbeGroup"/>.
-        /// </summary>
-        /// <returns><see cref="List{Contact}"/></returns>
-        public List<Contact> GetContacts()
-        {
-            List<Contact> contacts = new();
-
-            foreach (var p in Probes)
-            {
-                for (int i = 0; i < p.NumberOfContacts; i++)
-                {
-                    contacts.Add(p.GetContact(i));
-                }
-            }
-
-            return contacts;
-        }
-
-        /// <summary>
-        /// Returns all <see cref="Probe.DeviceChannelIndices"/>'s in the <see cref="ProbeGroup"/>.
-        /// </summary>
-        /// <remarks>
-        /// Device channel indices are guaranteed to be unique, unless they are -1. Multiple contacts can be
-        /// set to -1 to indicate they are not recorded from.
-        /// </remarks>
-        /// <returns><see cref="IEnumerable{Int32}"/></returns>
-        public IEnumerable<int> GetDeviceChannelIndices()
-        {
-            List<int> deviceChannelIndices = new();
-
-            foreach (var probe in Probes)
-            {
-                deviceChannelIndices.AddRange(probe.DeviceChannelIndices.ToList());
-            }
-
-            return deviceChannelIndices;
-        }
-
-        /// <summary>
-        /// Validate that the <see cref="ProbeGroup"/> correctly implements the Probeinterface specification.
-        /// </summary>
-        /// <remarks>
-        /// <para>Check that all necessary fields are populated (<see cref="Specification"/>,
-        /// <see cref="Version"/>, <see cref="Probes"/>).</para>
-        /// <para>Check that there is at least one <see cref="Probe"/> defined.</para>
-        /// <para>Check that all variables in each <see cref="Probe"/> have the same length.</para>
-        /// <para>Check if <see cref="Probe.ContactIds"/> are present, and generate default values
-        /// based on the index if there are no values defined.</para>
-        /// <para>Check if <see cref="Probe.ContactIds"/> are zero-indexed, and convert to
-        /// zero-indexed if possible.</para>
-        /// <para>Check if <see cref="Probe.ShankIds"/> are defined, and initialize empty strings 
-        /// if they are not defined.</para>
-        /// <para>Check if <see cref="Probe.DeviceChannelIndices"/> are defined, and initialize default
-        /// values (using the <see cref="Probe.ContactIds"/> value as the new <see cref="Probe.DeviceChannelIndices"/>).</para>
-        /// <para>Check that all <see cref="Probe.DeviceChannelIndices"/> are unique across all <see cref="Probe"/>'s,
-        /// unless the value is -1; multiple contacts can be set to -1.</para>
-        /// </remarks>
-        public void Validate()
-        {
-            if (string.IsNullOrEmpty(Specification))
-            {
-                throw new InvalidOperationException("Specification string must be defined.");
-            }
-
-            if (string.IsNullOrEmpty(Version))
-            {
-                throw new InvalidOperationException("Version string must be defined.");
-            }
-
-            if (Probes == null || Probes.Count() == 0)
-            {
-                throw new InvalidOperationException("No probes are listed, probes must be added during construction");
-            }
-
-            ValidateVariableLength();
-
-            SetDefaultContactIdsIfMissing();
-            ForceContactIdsToZeroIndexed();
-            SetEmptyShankIdsIfMissing();
-            SetDefaultDeviceChannelIndicesIfMissing();
+            if (Probes == null || !Probes.Any())
+                throw new InvalidOperationException("At least one probe must be defined.");
 
             if (!ValidateDeviceChannelIndices())
-            {
-                throw new Exception("Device channel indices are not unique across all probes.");
-            }
-        }
-
-        private void ValidateVariableLength()
-        {
-            for (int i = 0; i < Probes.Count(); i++)
-            {
-                if (Probes.ElementAt(i).NumberOfContacts != Probes.ElementAt(i).ContactPositions.Count() ||
-                    Probes.ElementAt(i).NumberOfContacts != Probes.ElementAt(i).ContactPlaneAxes.Count() ||
-                    Probes.ElementAt(i).NumberOfContacts != Probes.ElementAt(i).ContactShapeParams.Count() ||
-                    Probes.ElementAt(i).NumberOfContacts != Probes.ElementAt(i).ContactShapes.Count())
-                {
-                    throw new InvalidOperationException($"Required contact parameters are not the same length in probe {i}. " +
-                             "Check positions / plane axes / shapes / shape parameters for lengths.");
-                }
-
-                if (Probes.ElementAt(i).ContactIds != null &&
-                    Probes.ElementAt(i).ContactIds.Count() != Probes.ElementAt(i).NumberOfContacts)
-                {
-                    throw new InvalidOperationException($"Contact IDs does not have the correct number of channels for probe {i}");
-                }
-
-                if (Probes.ElementAt(i).ShankIds != null &&
-                    Probes.ElementAt(i).ShankIds.Count() != Probes.ElementAt(i).NumberOfContacts)
-                {
-                    throw new InvalidOperationException($"Shank IDs does not have the correct number of channels for probe {i}");
-                }
-
-                if (Probes.ElementAt(i).DeviceChannelIndices != null &&
-                    Probes.ElementAt(i).DeviceChannelIndices.Count() != Probes.ElementAt(i).NumberOfContacts)
-                {
-                    throw new InvalidOperationException($"Device Channel Indices does not have the correct number of channels for probe {i}");
-                }
-            }
-        }
-
-        private void SetDefaultContactIdsIfMissing()
-        {
-            for (int i = 0; i < Probes.Count(); i++)
-            {
-                if (Probes.ElementAt(i).ContactIds == null)
-                {
-                    Probes.ElementAt(i).ContactIds = Probe.DefaultContactIds(Probes.ElementAt(i).NumberOfContacts);
-                }
-            }
-        }
-
-        private void ForceContactIdsToZeroIndexed()
-        {
-            var contactIds = GetContactIds();
-            var numericIds = contactIds.Select(c => { return int.Parse(c); })
-                                       .ToList();
-
-            var min = numericIds.Min();
-            var max = numericIds.Max();
-
-            if (min == 1 && max == NumberOfContacts && numericIds.Count == numericIds.Distinct().Count())
-            {
-                for (int i = 0; i < Probes.Count(); i++)
-                {
-                    var probe = Probes.ElementAt(i);
-                    var newContactIds = probe.ContactIds.Select(c => { return (int.Parse(c) - 1).ToString(); });
-
-                    for (int j = 0; j < probe.NumberOfContacts; j++)
-                    {
-                        probe.ContactIds.SetValue(newContactIds.ElementAt(j), j);
-                    }
-                }
-            }
-        }
-
-        private void SetEmptyShankIdsIfMissing()
-        {
-            for (int i = 0; i < Probes.Count(); i++)
-            {
-                if (Probes.ElementAt(i).ShankIds == null)
-                {
-                    Probes.ElementAt(i).ShankIds = Probe.DefaultShankIds(Probes.ElementAt(i).NumberOfContacts);
-                }
-            }
-        }
-
-        private void SetDefaultDeviceChannelIndicesIfMissing()
-        {
-            for (int i = 0; i < Probes.Count(); i++)
-            {
-                if (Probes.ElementAt(i).DeviceChannelIndices == null)
-                {
-                    Probes.ElementAt(i).DeviceChannelIndices = new int[Probes.ElementAt(i).NumberOfContacts];
-
-                    for (int j = 0; j < Probes.ElementAt(i).NumberOfContacts; j++)
-                    {
-                        if (int.TryParse(Probes.ElementAt(i).ContactIds[j], out int result))
-                        {
-                            Probes.ElementAt(i).DeviceChannelIndices[j] = result;
-                        }
-                    }
-                }
-            }
+                throw new InvalidOperationException("Device channel indices are not unique across all probes.");
         }
 
         /// <summary>
-        /// Validate the uniqueness of all <see cref="Probe.DeviceChannelIndices"/>'s across all <see cref="Probe"/>'s.
+        /// Returns true if all assigned channel indices are unique across all probes.
+        /// Probes with no channel mapping assigned are excluded from the check.
+        /// Called by <see cref="Validate"/> on construction and by <see cref="ChannelWiring"/> after mutations.
         /// </summary>
-        /// <remarks>
-        /// All indices that are greater than or equal to 0 must be unique,
-        /// but there can be as many values equal to -1 as there are contacts. A value of -1 indicates that this contact is 
-        /// not being recorded.
-        /// </remarks>
-        /// <returns>True if all values not equal to -1 are unique, False if there are duplicates.</returns>
-        public bool ValidateDeviceChannelIndices()
+        internal bool ValidateDeviceChannelIndices()
         {
-            var activeChannels = GetDeviceChannelIndices().Where(index => index != -1);
-            return activeChannels.Count() == activeChannels.Distinct().Count();
+            var active = Probes
+                .Where(p => p.ChannelMap != null)
+                .SelectMany(p => p.ChannelMap!.Values)
+                .ToList();
+            return active.Count == active.Distinct().Count();
         }
 
         /// <summary>
-        /// Update the <see cref="Probe.DeviceChannelIndices"/> at the given probe index.
+        /// Returns a dictionary mapping each assigned hardware channel to a tuple of
+        /// (probe index, contact index within that probe, <see cref="Contact"/>), across all probes
+        /// in the group, or null if no channels have been assigned anywhere.
         /// </summary>
-        /// <remarks>
-        /// Device channel indices can be updated as contacts are being enabled or disabled. This is done on a 
-        /// per-probe basis, where the incoming array of indices must be the same size as the original probe, 
-        /// and must follow the standard for uniqueness found in <see cref="Probe.DeviceChannelIndices"/>.
-        /// </remarks>
-        /// <param name="probeIndex">Zero-based index of the probe to update.</param>
-        /// <param name="deviceChannelIndices">Array of <see cref="Probe.DeviceChannelIndices"/>.</param>
-        /// <exception cref="ArgumentException"></exception>
-        public void UpdateDeviceChannelIndices(int probeIndex, int[] deviceChannelIndices)
+        public IReadOnlyDictionary<int, (int ProbeIndex, int ContactIndex, Contact Contact)>? GetChannelMap()
         {
-            if (Probes.ElementAt(probeIndex).DeviceChannelIndices.Length != deviceChannelIndices.Length)
+            var result = new Dictionary<int, (int ProbeIndex, int ContactIndex, Contact Contact)>();
+            int probeIndex = 0;
+            foreach (var probe in Probes)
             {
-                throw new ArgumentException($"Incoming device channel indices have {deviceChannelIndices.Length} contacts, " +
-                    $"but the existing probe {probeIndex} has {Probes.ElementAt(probeIndex).DeviceChannelIndices.Length} contacts");
-            }    
-
-            Probes.ElementAt(probeIndex).DeviceChannelIndices = deviceChannelIndices;
-
-            if (!ValidateDeviceChannelIndices())
-            {
-                throw new ArgumentException("Device channel indices are not valid. Ensure that all values are either -1 or are unique.");
+                var perProbe = probe.GetChannelMap();
+                if (perProbe != null)
+                {
+                    foreach (var kvp in perProbe)
+                        result[kvp.Key] = (probeIndex, kvp.Value.ContactIndex, kvp.Value.Contact);
+                }
+                probeIndex++;
             }
+            return result.Count > 0 ? result : null;
         }
     }
 }

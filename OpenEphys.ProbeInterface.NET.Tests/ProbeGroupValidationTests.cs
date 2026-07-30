@@ -146,8 +146,8 @@ namespace OpenEphys.ProbeInterface.NET.Tests
             var group = Deserialize(MakeJson(deviceChannelIndices: "[3, 7]"));
             var map = group.Probes.First().ChannelMap;
             Assert.NotNull(map);
-            Assert.Equal(3, map![0]);
-            Assert.Equal(7, map[1]);
+            Assert.Equal(3, map.Keys.ElementAt(0));
+            Assert.Equal(7, map.Keys.ElementAt(1));
         }
 
         [Fact]
@@ -169,34 +169,43 @@ namespace OpenEphys.ProbeInterface.NET.Tests
         public void WireChannels_FirstCall_AssignsSpecifiedContacts()
         {
             var group = Deserialize(MakeJson());
-            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 0, 3 } });
+            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 0, 3 } }); // contact 0 -> channel 3
             var map = group.Probes.First().ChannelMap;
             Assert.NotNull(map);
-            Assert.Equal(3, map![0]);
-            Assert.False(map.ContainsKey(1)); // contact 1 was not assigned
+            Assert.Equal(3, map.Keys.ElementAt(0));
+            Assert.Equal(0, map![3]);
+            Assert.False(map.ContainsKey(1)); // channel 1 was not assigned
         }
 
         [Fact]
         public void WireChannels_SecondCall_IsIncremental()
         {
             var group = Deserialize(MakeJson());
-            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 0, 3 } });
-            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 1, 7 } });
+            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 0, 3 } }); // contact 0 -> channel 3
+            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 1, 7 } }); // contact 1 -> channel 7
             var map = group.Probes.First().ChannelMap;
-            Assert.Equal(3, map![0]); // still assigned from first call
-            Assert.Equal(7, map[1]);  // added by second call
+            Assert.Equal(3, map!.Keys.ElementAt(0)); // still assigned from first call
+            Assert.Equal(7, map.Keys.ElementAt(1));  // added by second call
         }
 
         [Fact]
         public void WireChannels_ChannelConflict_DisplacesExistingContact()
         {
             var group = Deserialize(MakeJson());
-            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 0, 5 } });
-            // Assign channel 5 to contact 1 — should displace contact 0
-            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 1, 5 } });
+            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 0, 5 } }); // contact 0 -> channel 5
             var map = group.Probes.First().ChannelMap;
-            Assert.False(map!.ContainsKey(0)); // displaced
-            Assert.Equal(5, map[1]);
+            Assert.NotNull(map);
+            Assert.True(map!.ContainsKey(5));
+            Assert.Equal(0, map[5]);
+            Assert.NotEqual(1, map[5]);
+
+            // Assign channel 5 to contact 1 — should displace contact 0
+            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 1, 5 } }); // contact 1 -> channel 5
+            map = group.Probes.First().ChannelMap;
+            Assert.NotNull(map);
+            Assert.True(map!.ContainsKey(5));
+            Assert.Equal(1, map[5]);
+            Assert.NotEqual(0, map[5]); // displaced
         }
 
         [Fact]
@@ -239,18 +248,18 @@ namespace OpenEphys.ProbeInterface.NET.Tests
         {
             var group = Deserialize(MakeJson());
             ChannelWiring.WireChannel(group,0, 1, 42);
-            Assert.Equal(42, group.Probes.First().ChannelMap![1]);
+            Assert.Equal(42, group.Probes.First().ChannelMap!.ElementAt(0).Key);
         }
 
         [Fact]
         public void UnwireChannel_RemovesEntry()
         {
             var group = Deserialize(MakeJson(deviceChannelIndices: "[3, 7]"));
-            ChannelWiring.UnwireChannel(group,0, 0);
+            ChannelWiring.UnwireChannel(group, 0, 0);
             var map = group.Probes.First().ChannelMap;
             Assert.NotNull(map);
-            Assert.False(map!.ContainsKey(0));
-            Assert.Equal(7, map[1]);
+            Assert.False(map!.ContainsKey(3));
+            Assert.Equal(7, map.Keys.ElementAt(0));
         }
 
         [Fact]
@@ -289,7 +298,7 @@ namespace OpenEphys.ProbeInterface.NET.Tests
         public void UnwireChannels_Probe_DoesNotThrowWhenAlreadyEmpty()
         {
             var group = Deserialize(MakeJson()); // no channel indices
-            var ex = Record.Exception(() => ChannelWiring.UnwireChannels(group,0));
+            var ex = Record.Exception(() => ChannelWiring.UnwireChannels(group, 0));
             Assert.Null(ex);
         }
 
@@ -303,66 +312,139 @@ namespace OpenEphys.ProbeInterface.NET.Tests
         }
 
         [Fact]
-        public void GetChannelMap_NoChannelsAssigned_ReturnsNull()
+        public void ChannelMap_NoChannelsAssigned_IsNull()
         {
             var group = Deserialize(MakeJson());
-            Assert.Null(group.GetChannelMap());
+            Assert.Null(group.Probes.First().ChannelMap);
         }
 
         [Fact]
-        public void GetChannelMap_ReturnsChannelToContactMapping()
+        public void ChannelMap_ReturnsChannelToContactIndexMapping()
         {
             var group = Deserialize(MakeJson(contactIds: "[\"e0\", \"e1\"]", deviceChannelIndices: "[3, 7]"));
-            var map = group.GetChannelMap();
+            var probe = group.Probes.First();
+            var map = probe.ChannelMap;
             Assert.NotNull(map);
-            Assert.Equal("e0", map![3].Contact.ContactId);
-            Assert.Equal("e1", map[7].Contact.ContactId);
+            Assert.Equal("e0", probe.Contacts[map![3]].ContactId);
+            Assert.Equal("e1", probe.Contacts[map[7]].ContactId);
         }
 
         [Fact]
-        public void GetChannelMap_ContactPropertiesAreAccessible()
+        public void ChannelMap_ContactsAccessibleViaIndex()
         {
             var group = Deserialize(MakeJson(deviceChannelIndices: "[0, 1]"));
-            var map = group.GetChannelMap()!;
-            Assert.Equal(0.0, map[0].Contact.PosX);
-            Assert.Equal(0.0, map[0].Contact.PosY);
-            Assert.Equal(0.0, map[1].Contact.PosX);
-            Assert.Equal(20.0, map[1].Contact.PosY);
+            var probe = group.Probes.First();
+            var map = probe.ChannelMap!;
+            Assert.Equal(0.0, probe.Contacts[map[0]].PosX);
+            Assert.Equal(0.0, probe.Contacts[map[0]].PosY);
+            Assert.Equal(0.0, probe.Contacts[map[1]].PosX);
+            Assert.Equal(20.0, probe.Contacts[map[1]].PosY);
         }
 
         [Fact]
-        public void GetChannelMap_ContactIndex_IsCorrect()
+        public void ChannelMap_ContactIndex_IsCorrect()
         {
             // contact_positions has 2 contacts; device_channel_indices assigns channel 99 to contact 1
             var group = Deserialize(MakeJson(deviceChannelIndices: "[-1, 99]"));
-            var map = group.GetChannelMap()!;
-            Assert.Equal(1, map[99].ContactIndex);
+            var map = group.Probes.First().ChannelMap!;
+            Assert.Equal(1, map[99]);
         }
 
         [Fact]
-        public void GetChannelMap_MultiProbe_CombinesBothProbes()
+        public void ChannelMap_MultiProbe_EachProbeHasItsOwnMap()
         {
             var group = Deserialize(MakeTwoProbeJson(
                 probe0ContactIds: "[\"a0\"]", probe0ChannelIndices: "[10]",
                 probe1ContactIds: "[\"b0\"]", probe1ChannelIndices: "[20]"));
-            var map = group.GetChannelMap()!;
-            Assert.Equal(2, map.Count);
-            Assert.Equal("a0", map[10].Contact.ContactId);
-            Assert.Equal(0, map[10].ProbeIndex);
-            Assert.Equal("b0", map[20].Contact.ContactId);
-            Assert.Equal(1, map[20].ProbeIndex);
+            var map0 = group.Probes.ElementAt(0).ChannelMap!;
+            var map1 = group.Probes.ElementAt(1).ChannelMap!;
+            Assert.Equal(0, map0[10]);
+            Assert.Equal("a0", group.Probes.ElementAt(0).Contacts[map0[10]].ContactId);
+            Assert.Equal(0, map1[20]);
+            Assert.Equal("b0", group.Probes.ElementAt(1).Contacts[map1[20]].ContactId);
         }
 
         [Fact]
-        public void GetChannelMap_AfterWireChannel_ReflectsUpdate()
+        public void ChannelMap_AfterWireChannel_ReflectsUpdate()
         {
             var group = Deserialize(MakeJson());
             ChannelWiring.WireChannel(group,0, 0, 42);
-            var map = group.GetChannelMap()!;
+            var map = group.Probes.First().ChannelMap!;
             Assert.Single(map);
             Assert.True(map.ContainsKey(42));
-            Assert.Equal(0, map[42].ProbeIndex);
-            Assert.Equal(0, map[42].ContactIndex);
+            Assert.Equal(0, map[42]);
+        }
+
+        private static string MakeShapeJson(string shape, string shapeParams) =>
+            $$"""
+            {
+              "specification": "probeinterface",
+              "version": "{{ProbeGroup.SupportedSpecVersion}}",
+              "probes": [
+                {
+                  "ndim": 2, "si_units": "um",
+                  "annotations": { "model_name": "P", "manufacturer": "M" },
+                  "contact_positions": [[0.0, 0.0]],
+                  "contact_shapes": ["{{shape}}"],
+                  "contact_shape_params": [{{shapeParams}}]
+                }
+              ]
+            }
+            """;
+
+        [Fact]
+        public void Circle_WithOnlyWidth_Throws()
+        {
+            // width alone satisfies ContactShapeParam's own constraint, but a circle needs radius.
+            var ex = Assert.Throws<ArgumentException>(() =>
+                Deserialize(MakeShapeJson("circle", "{\"width\": 5.0}")));
+            Assert.Contains("radius", ex.Message);
+        }
+
+        [Fact]
+        public void Rect_MissingHeight_Throws()
+        {
+            var ex = Assert.Throws<ArgumentException>(() =>
+                Deserialize(MakeShapeJson("rect", "{\"width\": 5.0}")));
+            Assert.Contains("width and height", ex.Message);
+        }
+
+        [Fact]
+        public void Rect_MissingWidthAndHeight_Throws()
+        {
+            var ex = Assert.Throws<ArgumentException>(() =>
+                Deserialize(MakeShapeJson("rect", "{\"radius\": 5.0}")));
+            Assert.Contains("width and height", ex.Message);
+        }
+
+        [Fact]
+        public void Square_MissingWidth_Throws()
+        {
+            var ex = Assert.Throws<ArgumentException>(() =>
+                Deserialize(MakeShapeJson("square", "{\"radius\": 5.0}")));
+            Assert.Contains("width", ex.Message);
+        }
+
+        [Fact]
+        public void Circle_WithRadius_DoesNotThrow()
+        {
+            var ex = Record.Exception(() => Deserialize(MakeShapeJson("circle", "{\"radius\": 5.0}")));
+            Assert.Null(ex);
+        }
+
+        [Fact]
+        public void Rect_WithWidthAndHeight_DoesNotThrow()
+        {
+            var ex = Record.Exception(() =>
+                Deserialize(MakeShapeJson("rect", "{\"width\": 5.0, \"height\": 3.0}")));
+            Assert.Null(ex);
+        }
+
+        [Fact]
+        public void Square_WithWidth_DoesNotThrow()
+        {
+            var ex = Record.Exception(() => Deserialize(MakeShapeJson("square", "{\"width\": 5.0}")));
+            Assert.Null(ex);
         }
     }
 }

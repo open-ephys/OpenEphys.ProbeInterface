@@ -1,36 +1,44 @@
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Xml.Serialization;
-using Newtonsoft.Json;
 
 namespace OpenEphys.ProbeInterface.NET
 {
     /// <summary>
-    /// Represents a single probe in a <see cref="ProbeGroup"/>.
-    /// The primary public API is <see cref="Contacts"/>, which exposes all per-contact data as a
-    /// strongly-typed collection. Channel mapping is stored in <see cref="ChannelMap"/> and managed
-    /// exclusively via <see cref="ChannelWiring"/>. JSON serialization/deserialization preserves the
-    /// probeinterface parallel-array format transparently.
+    /// Represents a single probe in a <see cref="ProbeGroup"/>. The primary public API is
+    /// <see cref="Contacts"/>, which exposes all per-contact data as a strongly-typed collection.
+    /// Channel mapping is managed exclusively via <see cref="ChannelWiring"/> and exposed through
+    /// <see cref="ProbeGroup.ChannelMap"/> or <see cref="SingleProbeGroup.ChannelMap"/>.
+    /// JSON serialization/deserialization preserves the probeinterface parallel-array format transparently.
     /// </summary>
     public class Probe
     {
-        /// <summary>Gets the number of spatial dimensions (2 or 3).</summary>
+        /// <summary>
+        /// Gets the number of spatial dimensions (2 or 3).
+        /// </summary>
         [XmlIgnore]
         [JsonProperty("ndim", Required = Required.Always)]
         public ProbeNdim NumDimensions { get; }
 
-        /// <summary>Gets the SI unit used for contact positions.</summary>
+        /// <summary>
+        /// Gets the SI unit used for contact positions.
+        /// </summary>
         [XmlIgnore]
         [JsonProperty("si_units", Required = Required.Always)]
         public ProbeSiUnits SiUnits { get; }
 
-        /// <summary>Gets the probe-level annotations (model name, manufacturer).</summary>
+        /// <summary>
+        /// Gets the probe-level annotations (model name, manufacturer).
+        /// </summary>
         [XmlIgnore]
         [JsonProperty("annotations", Required = Required.Always)]
         public ProbeAnnotations Annotations { get; }
 
-        /// <summary>Gets the planar contour describing the physical outline of the probe, or null.</summary>
+        /// <summary>
+        /// Gets the planar contour describing the physical outline of the probe, or null.
+        /// </summary>
         [XmlIgnore]
         [JsonProperty("probe_planar_contour", NullValueHandling = NullValueHandling.Ignore)]
         public double[][]? ProbePlanarContour { get; }
@@ -42,29 +50,20 @@ namespace OpenEphys.ProbeInterface.NET
         [JsonIgnore]
         public IReadOnlyList<Contact> Contacts { get; }
 
-        /// <summary>Gets the number of contacts on this probe.</summary>
+        /// <summary>
+        /// Gets the number of contacts on this probe.
+        /// </summary>
         [JsonIgnore]
         public int NumberOfContacts => Contacts.Count;
 
-        /// <summary>Gets the contact annotation keys defined for this probe.</summary>
+        /// <summary>
+        /// Gets the annotation keys that have at least one value defined across the probe's contacts.
+        /// </summary>
         [JsonIgnore]
         public IEnumerable<string> ContactAnnotationKeys =>
             annotationStore.Data?.Keys ?? Enumerable.Empty<string>();
 
-        private Dictionary<int, int>? channelMap;
-
-        /// <summary>
-        /// Gets the channel mapping for this probe as a read-only dictionary mapping contact index
-        /// to hardware channel, or null if no mapping has been assigned. Contacts absent from the
-        /// dictionary are not connected. Managed exclusively via <see cref="ProbeGroup"/>.
-        /// </summary>
-        [JsonIgnore]
-        public IReadOnlyDictionary<int, int>? ChannelMap => channelMap;
-
-        /// <summary>Replaces the channel map. Called by <see cref="ProbeGroup"/> to keep mapping consistent across all probes.</summary>
-        internal void SetChannelMap(Dictionary<int, int>? map) => channelMap = map;
-
-        private readonly ContactAnnotationStore annotationStore = new ContactAnnotationStore();
+        private readonly ContactAnnotationStore annotationStore = new();
 
         // Newtonsoft.Json serializes non-public [JsonProperty] members; deserialization
         // goes through [JsonConstructor] so these getters are never called during reads.
@@ -91,10 +90,10 @@ namespace OpenEphys.ProbeInterface.NET
         {
             get
             {
-                if (channelMap == null) return null;
-                var arr = new int[NumberOfContacts];
-                for (int i = 0; i < arr.Length; i++)
-                    arr[i] = channelMap.TryGetValue(i, out var ch) ? ch : -1;
+                if (ChannelMap == null) return null;
+                var arr = Enumerable.Repeat(-1, NumberOfContacts).ToArray();
+                foreach (var kvp in ChannelMap)
+                    arr[kvp.Value] = kvp.Key;
                 return arr;
             }
         }
@@ -117,8 +116,8 @@ namespace OpenEphys.ProbeInterface.NET
 
         /// <summary>
         /// JSON constructor. Deserializes a probe from the probeinterface parallel-array format and
-        /// builds the <see cref="Contacts"/> collection. Throws <see cref="ArgumentException"/> if any
-        /// parallel arrays have inconsistent lengths.
+        /// builds the <see cref="Contacts"/> collection. Throws <see cref="ArgumentException"/> if the
+        /// probeinterface json schema is not respected.
         /// </summary>
         [JsonConstructor]
         internal Probe(
@@ -129,8 +128,12 @@ namespace OpenEphys.ProbeInterface.NET
             double[][]? probe_planar_contour, int[]? device_channel_indices,
             string[]? contact_ids, string[]? shank_ids, string[]? contact_sides)
         {
+            if (ndim != ProbeNdim.Two && ndim != ProbeNdim.Three)
+                throw new ArgumentException($"ndim must be 2 or 3, but was {(int)ndim}.");
+
             int n = contact_positions.Length;
 
+            // Same number of contacts for every input array
             if (contact_shapes.Length != n || contact_shape_params.Length != n)
                 throw new ArgumentException(
                     $"contact_positions ({n}), contact_shapes ({contact_shapes.Length}), and " +
@@ -161,22 +164,82 @@ namespace OpenEphys.ProbeInterface.NET
                 }
             }
 
+            // Every position must have exactly ndim coordinates.
+            if (contact_positions.Any(x => x.Length != (int)ndim))
+                throw new ArgumentException(
+                    $"Every contact_positions entry must have exactly {(int)ndim} elements to match ndim.");
+
+            // Per the schema, each contact_plane_axes entry is exactly 2 axis vectors, each with length
+            // matching ndim.
+            if (contact_plane_axes != null)
+            {
+                foreach (var axes in contact_plane_axes)
+                {
+                    if (axes == null)
+                        throw new ArgumentException("contact_plane_axes entries cannot be null.");
+                    if (axes.Length != 2)
+                        throw new ArgumentException(
+                            $"Every contact_plane_axes entry must contain exactly 2 axis vectors, but found {axes.Length}.");
+                    if (axes.Any(row => row.Length != (int)ndim))
+                        throw new ArgumentException(
+                            $"Every contact_plane_axes axis vector must have exactly {(int)ndim} elements to match ndim.");
+                }
+            }
+
+            // Planar contour points must also match ndim.
+            if (probe_planar_contour != null && probe_planar_contour.Any(row => row.Length != (int)ndim))
+                throw new ArgumentException(
+                    $"Every probe_planar_contour entry must have exactly {(int)ndim} elements to match ndim.");
+
+            // Each contact's shape parameters must be consistent with its shape: circles need a radius,
+            // rects need both width and height, squares need a width.
+            for (int i = 0; i < n; i++)
+            {
+                var shape = contact_shapes[i];
+                var shapeParams = contact_shape_params[i];
+                switch (shape)
+                {
+                    case ContactShape.Circle:
+                        if (!shapeParams.Radius.HasValue)
+                            throw new ArgumentException(
+                                $"contact_shape_params[{i}] must specify radius for a circle contact.");
+                        break;
+                    case ContactShape.Rect:
+                        if (!shapeParams.Width.HasValue || !shapeParams.Height.HasValue)
+                            throw new ArgumentException(
+                                $"contact_shape_params[{i}] must specify both width and height for a rect contact.");
+                        break;
+                    case ContactShape.Square:
+                        if (!shapeParams.Width.HasValue)
+                            throw new ArgumentException(
+                                $"contact_shape_params[{i}] must specify width for a square contact.");
+                        break;
+                }
+            }
+
             NumDimensions = ndim;
             SiUnits = si_units;
             Annotations = annotations;
             ProbePlanarContour = probe_planar_contour;
             annotationStore.Data = contact_annotations;
 
-            // Convert the parallel array to a dictionary, skipping -1 (not connected) entries.
+            // Convert the parallel array to a channel to contact dictionary, skipping -1 (not connected) entries.
+            // Duplicate channels are detected here because the dict would silently overwrite them otherwise.
             if (device_channel_indices != null)
             {
                 var map = new Dictionary<int, int>();
+                int nonNegative = 0;
                 for (int i = 0; i < device_channel_indices.Length; i++)
                 {
                     if (device_channel_indices[i] != -1)
-                        map[i] = device_channel_indices[i];
+                    {
+                        map[device_channel_indices[i]] = i;
+                        nonNegative++;
+                    }
                 }
-                channelMap = map.Count > 0 ? map : null;
+                if (map.Count < nonNegative)
+                    throw new InvalidOperationException("device_channel_indices contains duplicate channel values.");
+                ChannelMap = map.Count > 0 ? map : null;
             }
 
             Contacts = BuildContacts(n, contact_positions, contact_plane_axes, contact_shapes,
@@ -189,10 +252,10 @@ namespace OpenEphys.ProbeInterface.NET
         /// through any contact are immediately visible probe-wide.
         /// </summary>
         private static Contact[] BuildContacts(
-            int n, double[][] positions, double[][][]? planeAxes,
+            int n, double[][] positions, double[][]?[]? planeAxes,
             ContactShape[] shapes, ContactShapeParam[] shapeParams,
-            string[]? contactIds, string[]? shankIds,
-            string[]? contactSides, ContactAnnotationStore store)
+            string?[]? contactIds, string?[]? shankIds,
+            string?[]? contactSides, ContactAnnotationStore store)
         {
             var contacts = new Contact[n];
             for (int i = 0; i < n; i++)
@@ -216,24 +279,91 @@ namespace OpenEphys.ProbeInterface.NET
         }
 
         /// <summary>
-        /// Returns a dictionary mapping each assigned hardware channel to a tuple of
-        /// (contact index within this probe, <see cref="Contact"/>), or null if no channels
-        /// have been assigned on this probe.
+        /// Deep copy constructor. Produces a fully independent probe with its own channel map, contact
+        /// annotation store, and contact objects.
         /// </summary>
-        public IReadOnlyDictionary<int, (int ContactIndex, Contact Contact)>? GetChannelMap()
+        internal Probe(Probe source)
         {
-            if (channelMap == null) return null;
-            var result = new Dictionary<int, (int ContactIndex, Contact Contact)>();
-            foreach (var kvp in channelMap)
-                result[kvp.Value] = (kvp.Key, Contacts[kvp.Key]);
-            return result.Count > 0 ? result : null;
+            NumDimensions = source.NumDimensions;
+            SiUnits = source.SiUnits;
+            Annotations = new ProbeAnnotations(source.Annotations);
+            ProbePlanarContour = source.ProbePlanarContour?.Select(row => (double[])row.Clone()).ToArray();
+
+            ChannelMap = source.ChannelMap?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+            var newStore = new ContactAnnotationStore();
+            if (source.annotationStore.Data != null)
+                newStore.Data = source.annotationStore.Data.ToDictionary(
+                    kvp => kvp.Key,
+                    kvp => (object[])kvp.Value.Clone());
+            annotationStore = newStore;
+
+            int n = source.NumberOfContacts;
+            var positions = source.Contacts.Select(c =>
+                c.PosZ.HasValue
+                    ? new double[] { c.PosX, c.PosY, c.PosZ.Value }
+                    : new double[] { c.PosX, c.PosY }).ToArray();
+            var planeAxes = source.Contacts.All(c => c.PlaneAxes == null) ? null
+                : source.Contacts.Select(c => c.PlaneAxes?.Select(row => (double[])row.Clone()).ToArray()).ToArray();
+            var shapes = source.Contacts.Select(c => c.Shape).ToArray();
+            var shapeParams = source.Contacts.Select(c => c.ShapeParams).ToArray();
+            var contactIds = source.Contacts.All(c => c.ContactId == null) ? null
+                : source.Contacts.Select(c => c.ContactId).ToArray();
+            var shankIds = source.Contacts.All(c => c.ShankId == null) ? null
+                : source.Contacts.Select(c => c.ShankId).ToArray();
+            var contactSides = source.Contacts.All(c => c.Side == null) ? null
+                : source.Contacts.Select(c => c.Side).ToArray();
+
+            Contacts = BuildContacts(n, positions, planeAxes, shapes, shapeParams,
+                contactIds, shankIds, contactSides, newStore);
+        }
+
+        /// <summary>
+        /// Gets the channel mapping for this probe as a dictionary mapping hardware channel to contact index,
+        /// or null if no channels are assigned. Internal: public access is through the containing <see
+        /// cref="ProbeGroup"/> or <see cref="SingleProbeGroup"/>. Managed exclusively via <see
+        /// cref="ChannelWiring"/>.
+        /// </summary>
+        [JsonIgnore]
+        internal IReadOnlyDictionary<int, int>? ChannelMap { get; set; }
+
+        /// <summary>
+        /// Gets the hardware channel assigned to the contact at <paramref name="contactIndex"/>.
+        /// </summary>
+        /// <param name="contactIndex">Zero-based index of the contact within this probe.</param>
+        /// <param name="channel">
+        /// When this method returns true, contains the hardware channel assigned to the contact. When this
+        /// method returns false, contains -1.
+        /// </param>
+        /// <returns>True if the contact is assigned to a channel; otherwise false.</returns>
+        internal bool TryGetMappedChannel(int contactIndex, out int channel)
+        {
+            if (ChannelMap != null)
+            {
+                foreach (var kvp in ChannelMap)
+                {
+                    if (kvp.Value == contactIndex)
+                    {
+                        channel = kvp.Key;
+                        return true;
+                    }
+                }
+            }
+            channel = -1;
+            return false;
         }
 
         /// <summary>
         /// Returns all per-contact values for the given annotation key as an array of
-        /// <typeparamref name="T"/>, or null if the key is absent from the probe entirely.
-        /// Contacts that have no value for the key yield the default of <typeparamref name="T"/>.
+        /// <typeparamref name="T"/>, or null if the key is absent from the probe entirely. Contacts that have
+        /// no value for the key yield the default of <typeparamref name="T"/>.
         /// </summary>
+        /// <typeparam name="T">The type to convert each stored value to.</typeparam>
+        /// <param name="key">The annotation key to retrieve.</param>
+        /// <returns>
+        /// An array of length <see cref="NumberOfContacts"/> containing each contact's value, or null if the
+        /// key is absent from this probe.
+        /// </returns>
         public T[]? GetContactAnnotation<T>(string key)
         {
             if (annotationStore.Data == null || !annotationStore.Data.TryGetValue(key, out var values) || values == null)
@@ -243,11 +373,17 @@ namespace OpenEphys.ProbeInterface.NET
         }
 
         /// <summary>
-        /// Adds or replaces a per-contact annotation for the given key. <paramref name="values"/>
-        /// must contain one element per contact. Null elements are permitted for contacts without
-        /// a value. Per-contact <see cref="Contact.GetAnnotation{T}"/> reflects the update
-        /// immediately.
+        /// Adds or replaces a per-contact annotation for the given key. <paramref name="values"/> must
+        /// contain one element per contact. Null elements are permitted for contacts without a value.
+        /// Per-contact <see cref="Contact.GetAnnotation{T}"/> reflects the update immediately.
         /// </summary>
+        /// <typeparam name="T">The type of the annotation values.</typeparam>
+        /// <param name="key">The annotation key to set.</param>
+        /// <param name="values">An array of length <see cref="NumberOfContacts"/> with one value per
+        /// contact.</param>
+        /// <exception cref="ArgumentException">
+        /// Thrown when <paramref name="values"/>.Length does not equal <see cref="NumberOfContacts"/>.
+        /// </exception>
         public void SetContactAnnotation<T>(string key, T[] values)
         {
             if (values.Length != NumberOfContacts)
@@ -261,8 +397,9 @@ namespace OpenEphys.ProbeInterface.NET
 
         /// <summary>
         /// Removes the per-contact annotation with the given key entirely.
-        /// Returns true if the key was found and removed.
         /// </summary>
+        /// <param name="key">The annotation key to remove.</param>
+        /// <returns>True if the key was found and removed; false if it was absent.</returns>
         public bool RemoveContactAnnotation(string key) =>
             annotationStore.Data != null && annotationStore.Data.Remove(key);
     }

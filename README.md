@@ -60,10 +60,13 @@ ChannelWiring.WireChannels(probeGroup, probeIndex: 0, new Dictionary<int, int>
     { 0, 3 }, { 1, 1 }, { 2, 2 }, { 3, 0 }
 });
 
-// Query the resulting channel map (channel number → probe/contact/Contact)
-var map = probeGroup.GetChannelMap();
-foreach (var (channel, entry) in map)
-    Console.WriteLine($"Channel {channel} → probe {entry.ProbeIndex}, contact {entry.ContactIndex}");
+// Query the resulting channel map (channel number → probe index, contact index)
+var map = probeGroup.ChannelMap;
+if (map != null)
+{
+    foreach (var (channel, entry) in map)
+        Console.WriteLine($"Channel {channel} → probe {entry.ProbeIndex}, contact {entry.ContactIndex}");
+}
 
 // Wire a single contact, or clear the mapping when done
 ChannelWiring.WireChannel(probeGroup, probeIndex: 0, contactIndex: 4, channel: 7);

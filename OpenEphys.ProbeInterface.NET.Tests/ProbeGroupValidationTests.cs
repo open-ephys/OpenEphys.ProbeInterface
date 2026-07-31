@@ -169,7 +169,7 @@ namespace OpenEphys.ProbeInterface.NET.Tests
         public void WireChannels_FirstCall_AssignsSpecifiedContacts()
         {
             var group = Deserialize(MakeJson());
-            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 0, 3 } }); // contact 0 -> channel 3
+            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 3, 0 } }); // channel 3 -> contact 0
             var map = group.Probes.First().ChannelMap;
             Assert.NotNull(map);
             Assert.Equal(3, map.Keys.ElementAt(0));
@@ -181,8 +181,8 @@ namespace OpenEphys.ProbeInterface.NET.Tests
         public void WireChannels_SecondCall_IsIncremental()
         {
             var group = Deserialize(MakeJson());
-            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 0, 3 } }); // contact 0 -> channel 3
-            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 1, 7 } }); // contact 1 -> channel 7
+            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 3, 0 } }); // channel 3 -> contact 0
+            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 7, 1 } }); // channel 7 -> contact 1
             var map = group.Probes.First().ChannelMap;
             Assert.Equal(3, map!.Keys.ElementAt(0)); // still assigned from first call
             Assert.Equal(7, map.Keys.ElementAt(1));  // added by second call
@@ -192,7 +192,7 @@ namespace OpenEphys.ProbeInterface.NET.Tests
         public void WireChannels_ChannelConflict_DisplacesExistingContact()
         {
             var group = Deserialize(MakeJson());
-            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 0, 5 } }); // contact 0 -> channel 5
+            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 5, 0 } }); // channel 5 -> contact 0
             var map = group.Probes.First().ChannelMap;
             Assert.NotNull(map);
             Assert.True(map!.ContainsKey(5));
@@ -200,7 +200,7 @@ namespace OpenEphys.ProbeInterface.NET.Tests
             Assert.NotEqual(1, map[5]);
 
             // Assign channel 5 to contact 1 — should displace contact 0
-            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 1, 5 } }); // contact 1 -> channel 5
+            ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 5, 1 } }); // channel 5 -> contact 1
             map = group.Probes.First().ChannelMap;
             Assert.NotNull(map);
             Assert.True(map!.ContainsKey(5));
@@ -213,7 +213,7 @@ namespace OpenEphys.ProbeInterface.NET.Tests
         {
             var group = Deserialize(MakeJson());
             Assert.Throws<ArgumentException>(() =>
-                ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 5, 0 } }));
+                ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 0, 5 } })); // contact 5 is out of range
         }
 
         [Fact]
@@ -221,15 +221,15 @@ namespace OpenEphys.ProbeInterface.NET.Tests
         {
             var group = Deserialize(MakeJson());
             Assert.Throws<ArgumentException>(() =>
-                ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 0, -1 } }));
+                ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { -1, 0 } })); // channel -1 is negative
         }
 
         [Fact]
-        public void WireChannels_DuplicateChannelWithinCall_Throws()
+        public void WireChannels_DuplicateContactWithinCall_Throws()
         {
             var group = Deserialize(MakeJson());
             Assert.Throws<ArgumentException>(() =>
-                ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 0, 5 }, { 1, 5 } }));
+                ChannelWiring.WireChannels(group,0, new Dictionary<int, int> { { 5, 0 }, { 7, 0 } })); // contact 0 twice
         }
 
         [Fact]
@@ -238,7 +238,7 @@ namespace OpenEphys.ProbeInterface.NET.Tests
             var group = Deserialize(MakeTwoProbeJson(probe0ChannelIndices: "[10]"));
             // Probe 0 already has channel 10; try to assign 10 to probe 1
             Assert.Throws<ArgumentException>(() =>
-                ChannelWiring.WireChannels(group,1, new Dictionary<int, int> { { 0, 10 } }));
+                ChannelWiring.WireChannels(group,1, new Dictionary<int, int> { { 10, 0 } }));
             // Probe 1 map must be rolled back to null
             Assert.Null(group.Probes.ElementAt(1).ChannelMap);
         }

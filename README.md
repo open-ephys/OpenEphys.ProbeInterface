@@ -53,7 +53,7 @@ Console.WriteLine(probe0.Annotations.ModelName);
 probe0.Annotations.SetAnnotation("implant_date", "2025-01-01");
 string? date = probe0.Annotations.GetAnnotation<string>("implant_date");
 
-// Wire hardware channels to contacts (contact index → channel number)
+// Wire hardware channels to contacts (channel number → contact index)
 // Validates uniqueness within and across all probes in the group
 ChannelWiring.WireChannels(probeGroup, probeIndex: 0, new Dictionary<int, int>
 {
